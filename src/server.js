@@ -8,6 +8,18 @@ import fetch from 'node-fetch';
 import crypto from "crypto";
 import { Client, GatewayIntentBits } from 'discord.js';
 
+dotenv.config(); 
+
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
+});
+
+client.once("ready", () => {
+  console.log(`✅ Bot 已登入：${client.user.tag}`);
+});
+
+// 這行是關鍵，讓 Bot 顯示在線
+client.login(process.env.DISCORD_TOKEN);
 /**
  * Main HTTP server used for the bot.
  */
@@ -194,7 +206,7 @@ aapp.get("/discord-oauth-callback", async (req, res) => {
 
   // 存起 access token（可存 DB 或記憶體）
   global.userTokens = global.userTokens || {};
-  global.userTokens[tokens.scope] = tokens.access_token;
+  global.userTokens[userId] = tokens.access_token;
 
   res.send("授權成功！現在就可以更新 Linked Role");
 });
