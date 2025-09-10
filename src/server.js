@@ -5,6 +5,7 @@ import config from './config.js';
 import * as discord from './discord.js';
 import * as storage from './storage.js';
 import fetch from 'node-fetch';
+import crypto from "crypto";
 import { Client, GatewayIntentBits } from 'discord.js';
 
 /**
@@ -136,7 +137,9 @@ app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
 });
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
+const aapp = express();
+aapp.use(express.json());
+aapp.use(cookieParser());
 
 const ROLE_MAP = {
   "1346250078238544004": "1415357826662011021",
@@ -146,38 +149,78 @@ const ROLE_MAP = {
   "1346250832466808832": "1415361550457507840"
 };
 
-async function updateLinkedRoles(userId, roles) {
+function generateState() {
+  return crypto.randomBytes(16).toString("hex");
+}
+
+// OAuth2 連結
+aapp.get("/login", (req, res) => {
+  const state = generateState();
+  res.cookie("oauth_state", state, { maxAge: 5 * 60 * 1000, httpOnly: true });
+
+  const params = new URLSearchParams({
+    client_id: process.env.DISCORD_CLIENT_ID,
+    redirect_uri: process.env.DISCORD_REDIRECT_URI,
+    response_type: "code",
+    scope: "role_connections.write identify",
+    state,
+  });
+
+  res.redirect(`https://discord.com/api/oauth2/authorize?${params.toString()}`);
+});
+
+// OAuth2 回呼
+aapp.get("/discord-oauth-callback", async (req, res) => {
+  const { code, state } = req.query;
+
+  if (state !== req.cookies.oauth_state) return res.status(403).send("Invalid state");
+
+  // 換取 access token
+  const data = new URLSearchParams({
+    client_id: process.env.DISCORD_CLIENT_ID,
+    client_secret: process.env.DISCORD_CLIENT_SECRET,
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: process.env.DISCORD_REDIRECT_URI,
+  });
+
+  const tokenResp = await fetch("https://discord.com/api/oauth2/token", {
+    method: "POST",
+    body: data,
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  });
+
+  const tokens = await tokenResp.json();
+
+  // 存起 access token（可存 DB 或記憶體）
+  global.userTokens = global.userTokens || {};
+  global.userTokens[tokens.scope] = tokens.access_token;
+
+  res.send("授權成功！現在就可以更新 Linked Role");
+});
+
+// 更新 Linked Role
+async function updateLinkedRole(userId, accessToken, roles) {
   for (const [sourceRole, targetRole] of Object.entries(ROLE_MAP)) {
     const connected = roles.includes(sourceRole);
 
-    try {
-      await fetch(`https://discord.com/api/v10/users/@me/applications/${process.env.DISCORD_CLIENT_ID}/role-connection`, {
-        method: 'PUT',
+    await fetch(
+      `https://discord.com/api/v10/users/@me/applications/${process.env.DISCORD_CLIENT_ID}/role-connection`,
+      {
+        method: "PUT",
         headers: {
-          Authorization: `Bot ${process.env.DISCORD_TOKEN}`,
-          'Content-Type': 'application/json'
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           platform_name: "MyApp",
           platform_username: "Unknown",
           platform_id: userId,
-          metadata: {
-            [targetRole]: connected ? 1 : 0
-          }
-        })
-      });
-      console.log(`Updated linked role ${targetRole} for user ${userId}: ${connected}`);
-    } catch (err) {
-      console.error(`Failed to update linked role ${targetRole} for user ${userId}:`, err);
-    }
+          metadata: { [targetRole]: connected ? 1 : 0 },
+        }),
+      }
+    );
   }
 }
 
-client.on('guildMemberUpdate', async (oldMember, newMember) => {
-  // 只要角色有變動就更新 Linked Roles
-  if (oldMember.roles.cache !== newMember.roles.cache) {
-    await updateLinkedRoles(newMember.id, Array.from(newMember.roles.cache.keys()));
-  }
-});
-
-client.login(process.env.DISCORD_TOKEN);
+aapp.listen(3000, () => console.log("Server running on port 3000"));
