@@ -4,6 +4,7 @@ import 'dotenv/config';
 import config from './config.js';
 import * as discord from './discord.js';
 import * as storage from './storage.js';
+import fetch from 'node-fetch';
 import { Client, GatewayIntentBits } from 'discord.js';
 
 /**
@@ -145,16 +146,37 @@ const ROLE_MAP = {
   "1346250832466808832": "1415361550457507840"
 };
 
-client.on('guildMemberUpdate', async (oldMember, newMember) => {
-  try {
-    for (const [sourceRole, targetRole] of Object.entries(ROLE_MAP)) {
-      if (newMember.roles.cache.has(sourceRole) && !newMember.roles.cache.has(targetRole)) {
-        await newMember.roles.add(targetRole);
-        console.log(`Added target role ${targetRole} to ${newMember.user.tag}`);
-      }
+async function updateLinkedRoles(userId, roles) {
+  for (const [sourceRole, targetRole] of Object.entries(ROLE_MAP)) {
+    const connected = roles.includes(sourceRole);
+
+    try {
+      await fetch(`https://discord.com/api/v10/users/@me/applications/${process.env.DISCORD_CLIENT_ID}/role-connection`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bot ${process.env.DISCORD_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          platform_name: "MyApp",
+          platform_username: "Unknown",
+          platform_id: userId,
+          metadata: {
+            [targetRole]: connected ? 1 : 0
+          }
+        })
+      });
+      console.log(`Updated linked role ${targetRole} for user ${userId}: ${connected}`);
+    } catch (err) {
+      console.error(`Failed to update linked role ${targetRole} for user ${userId}:`, err);
     }
-  } catch (err) {
-    console.error(err);
+  }
+}
+
+client.on('guildMemberUpdate', async (oldMember, newMember) => {
+  // 只要角色有變動就更新 Linked Roles
+  if (oldMember.roles.cache !== newMember.roles.cache) {
+    await updateLinkedRoles(newMember.id, Array.from(newMember.roles.cache.keys()));
   }
 });
 
