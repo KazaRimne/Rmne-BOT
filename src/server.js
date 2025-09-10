@@ -1,11 +1,11 @@
+import * as dotenv from 'dotenv'
+import crypto from "crypto";
+import fetch from 'node-fetch';
 import express from 'express';
 import cookieParser from 'cookie-parser';
-import 'dotenv/config';
 import config from './config.js';
 import * as discord from './discord.js';
 import * as storage from './storage.js';
-import fetch from 'node-fetch';
-import crypto from "crypto";
 import { Client, GatewayIntentBits } from 'discord.js';
 
 dotenv.config(); 
