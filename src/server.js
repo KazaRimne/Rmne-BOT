@@ -347,5 +347,4 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
 // -------------------
 // 啟動服務器
 // -------------------
-aapp.listen(5000, () => console.log("Server running on port 5000"));
 client.login(DISCORD_BOT_TOKEN);
