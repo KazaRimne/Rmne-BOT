@@ -26,6 +26,7 @@ app.get("/linked-role", linkedRoleHandler);
 
 app.listen(PORT, () => {
   console.log(`✅ Server running at https://replit.rimnebot.repl.co`);
+});
 /**
  * Main HTTP server used for the bot.
  */
@@ -160,13 +161,17 @@ aapp.use(express.json());
 aapp.use(cookieParser());
 
 const ROLE_MAP = {
-  "1346250078238544004": "1415357826662011021",
-  "1346253003467784194": "1415360988949250141",
-  "1346253445161812048": "1415360988949250141",
-  "1346253804622053427": "1415360988949250141",
-  "1346250832466808832": "1415361550457507840"
+  "1346250078238544004": "kazarimne",
+  "1346253003467784194": "member",
+  "1346253445161812048": "member",
+  "1346253804622053427": "member",
+  "1346250832466808832": "admin"
 };
 
+// 已授權用戶 token
+const userTokens = {}; // { userId: access_token }
+
+// 生成 OAuth2 state
 function generateState() {
   return crypto.randomBytes(16).toString("hex");
 }
@@ -188,57 +193,160 @@ aapp.get("/login", (req, res) => {
 });
 
 // OAuth2 回呼
+aapp.get("/login", (req, res) => {
+  const state = generateState();
+  res.cookie("oauth_state", state, { maxAge: 5 * 60 * 1000, httpOnly: true });
+
+  const params = new URLSearchParams({
+    client_id: DISCORD_CLIENT_ID,
+    redirect_uri: DISCORD_REDIRECT_URI,
+    response_type: "code",
+    scope: "role_connections.write identify",
+    state
+  });
+
+  res.redirect(`https://discord.com/api/oauth2/authorize?${params.toString()}`);
+});
+
+// -------------------
+// OAuth2 回呼
+// -------------------
 aapp.get("/discord-oauth-callback", async (req, res) => {
   const { code, state } = req.query;
 
   if (state !== req.cookies.oauth_state) return res.status(403).send("Invalid state");
 
-  // 換取 access token
+  // 交換 access token
   const data = new URLSearchParams({
-    client_id: process.env.DISCORD_CLIENT_ID,
-    client_secret: process.env.DISCORD_CLIENT_SECRET,
+    client_id: DISCORD_CLIENT_ID,
+    client_secret: DISCORD_CLIENT_SECRET,
     grant_type: "authorization_code",
     code,
-    redirect_uri: process.env.DISCORD_REDIRECT_URI,
+    redirect_uri: DISCORD_REDIRECT_URI
   });
 
   const tokenResp = await fetch("https://discord.com/api/oauth2/token", {
     method: "POST",
     body: data,
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: { "Content-Type": "application/x-www-form-urlencoded" }
   });
 
   const tokens = await tokenResp.json();
 
-  // 存起 access token（可存 DB 或記憶體）
-  global.userTokens = global.userTokens || {};
-  global.userTokens[userId] = tokens.access_token;
+  // 取得使用者 ID
+  const userResp = await fetch("https://discord.com/api/users/@me", {
+    headers: { Authorization: `Bearer ${tokens.access_token}` }
+  });
+  const userData = await userResp.json();
+  const userId = userData.id;
 
-  res.send("授權成功！現在就可以更新 Linked Role");
+  // 存 token
+  userTokens[userId] = tokens.access_token;
+
+  res.send("授權成功！現在可以更新 Linked Role");
 });
 
+// -------------------
+// 註冊 Linked Role Metadata
+// -------------------
+async function registerMetadata() {
+  const url = `https://discord.com/api/v10/applications/${DISCORD_CLIENT_ID}/role-connections/metadata`;
+  const headers = {
+    Authorization: `Bot ${DISCORD_BOT_TOKEN}`,
+    "Content-Type": "application/json"
+  };
+
+  // 根據 ROLE_MAP 自動生成 metadata
+  const uniqueKeys = [...new Set(Object.values(ROLE_MAP))]; // 取唯一 key
+  const metadata = uniqueKeys.map(key => ({
+    key,
+    name: key,
+    description: `The ${key} of the user`,
+    type: 1 // type 1 = integer
+  }));
+
+  try {
+    const resp = await fetch(url, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify(metadata)
+    });
+
+    if ([200, 204].includes(resp.status)) {
+      console.log("Metadata 註冊成功！");
+    } else {
+      console.log(`Metadata 註冊失敗: ${resp.status}`);
+      console.log(await resp.text());
+    }
+  } catch (err) {
+    console.error("註冊 Metadata 時發生錯誤:", err);
+  }
+}
+
+// -------------------
 // 更新 Linked Role
-async function updateLinkedRole(userId, accessToken, roles) {
-  for (const [sourceRole, targetRole] of Object.entries(ROLE_MAP)) {
+// -------------------
+async function updateLinkedRole(userId, roles) {
+  const accessToken = userTokens[userId];
+  if (!accessToken) {
+    console.log(`用戶 ${userId} 沒有授權 OAuth2，跳過`);
+    return;
+  }
+
+  for (const [sourceRole, targetKey] of Object.entries(ROLE_MAP)) {
     const connected = roles.includes(sourceRole);
 
-    await fetch(
-      `https://discord.com/api/v10/users/@me/applications/${process.env.DISCORD_CLIENT_ID}/role-connection`,
+    const payload = {
+      platform_name: "MyApp",
+      platform_username: "Unknown",
+      platform_id: userId,
+      metadata: { [targetKey]: connected ? 1 : 0 }
+    };
+
+    const resp = await fetch(
+      `https://discord.com/api/v10/users/@me/applications/${DISCORD_CLIENT_ID}/role-connection`,
       {
         method: "PUT",
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
+          "Content-Type": "application/json"
         },
-        body: JSON.stringify({
-          platform_name: "MyApp",
-          platform_username: "Unknown",
-          platform_id: userId,
-          metadata: { [targetRole]: connected ? 1 : 0 },
-        }),
+        body: JSON.stringify(payload)
       }
     );
+
+    if (![200, 204].includes(resp.status)) {
+      console.log(`更新 Linked Role 失敗: ${resp.status}, ${await resp.text()}`);
+    }
   }
 }
 
+// -------------------
+// Discord Bot
+// -------------------
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
+
+client.on("ready", async () => {
+  console.log(`Bot 已上線: ${client.user.tag}`);
+  // 上線時先註冊 Metadata
+  await registerMetadata();
+});
+
+// 偵測用戶角色變化
+client.on("guildMemberUpdate", async (oldMember, newMember) => {
+  const oldRoles = oldMember.roles.cache.map(r => r.id);
+  const newRoles = newMember.roles.cache.map(r => r.id);
+
+  const relevantOld = oldRoles.filter(r => Object.keys(ROLE_MAP).includes(r));
+  const relevantNew = newRoles.filter(r => Object.keys(ROLE_MAP).includes(r));
+
+  if (JSON.stringify(relevantOld) !== JSON.stringify(relevantNew)) {
+    await updateLinkedRole(newMember.id, newRoles);
+  }
+});
+
+// -------------------
+// 啟動服務器
+// -------------------
 aapp.listen(3000, () => console.log("Server running on port 3000"));
+client.login(DISCORD_BOT_TOKEN);
