@@ -6,6 +6,7 @@ import cookieParser from 'cookie-parser';
 import config from './config.js';
 import * as discord from './discord.js';
 import * as storage from './storage.js';
+import { linkedRoleHandler } from "./verify.js";
 import { Client, GatewayIntentBits } from 'discord.js';
 
 dotenv.config(); 
@@ -20,6 +21,11 @@ client.once("ready", () => {
 
 // 這行是關鍵，讓 Bot 顯示在線
 client.login(process.env.DISCORD_TOKEN);
+
+app.get("/linked-role", linkedRoleHandler);
+
+app.listen(PORT, () => {
+  console.log(`✅ Server running at https://replit.rimnebot.repl.co`);
 /**
  * Main HTTP server used for the bot.
  */
