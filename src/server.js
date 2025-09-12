@@ -11,7 +11,7 @@ import { Client, GatewayIntentBits } from 'discord.js';
 
 dotenv.config(); 
 
-const client = new Client({
+export const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
 });
 
@@ -19,7 +19,6 @@ client.once("ready", () => {
   console.log(`✅ Bot 已登入：${client.user.tag}`);
 });
 
-// 這行是關鍵，讓 Bot 顯示在線
 client.login(process.env.DISCORD_TOKEN);
 
 app.get("/linked-role", linkedRoleHandler);
